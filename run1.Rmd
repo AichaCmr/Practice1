@@ -1,0 +1,318 @@
+---
+title: "Devoir1"
+output: pdf_document
+date: "2024-09-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Librairies and date importation
+```{r include=FALSE}
+# Load necessary packages
+library(dplyr)
+library(lubridate)
+#library("ggplot")
+```
+
+```{r}
+mydata <- read.csv("C:/Users/Admin/OneDrive/Desktop/Automne 2024/Statistical modeling/GitPractice/Practice1/MATH60604A-project-bixi_part1_team5.csv")
+#head(mydata)
+```
+## Cleaning and data preparation
+### Cleaning function
+```{r}
+preproc_dat <- function(mydata){
+  dat <- mydata
+  
+  #Changing variables (mem,wday,rushhours) to factors, creating var to code for weekend and rushmod (modified rush hour that excludes weekend)
+  dat <- mutate(dat, wend = as.factor(as.integer(dat$wday %in% c("Saturday","Sunday"))))  #creates variable wend (for weekend), where 1 = weekend, 0 = week. 
+  dat <- mutate(dat, rushmod = rushhour)
+  dat$rushmod[dat$wend==1] <- 3 
+  dat <- mutate(dat,across(c(mem,wday,rushhour,rushmod), as.factor))
+  
+  return(dat)
+}
+```
+```{r}
+dat  <- preproc_dat(mydata)
+ 
+```
+
+
+### Data preparation and exploration
+####  New variables
+create the variables:  
+  2 new variables for day and time, 
+  rain( rain vs. no rain), 
+  trip duration( trip_short = trip < 30min, trip_med = trip > 30min && trip < 60min), 
+  month from day
+
+```{r}
+# 2 new variables for day and time
+# Convert 'dep' column to date-time format
+dat <- mutate(dat, dep = ymd_hms(dep))
+
+# Create new columns for 'day' and 'time'
+dat <- mutate(dat, day = as.Date(dep), time = format(dep, "%H:%M:%S"))
+
+# Create a "rain vs no rain" variable
+dat <- dat %>%
+  mutate(rain = ifelse(prec > 0, "rain", "no rain"))
+
+# Categorize trip duration into three categories: short, medium, and long
+dat <- dat %>%
+  mutate(trip_category = case_when(
+    dur < 30 * 60 ~ "trip_short",       # Trip duration less than 30 minutes
+    dur >= 30 * 60 & dur < 60 * 60 ~ "trip_med",   # Trip duration between 30 and 60 minutes
+    dur >= 60 * 60 ~ "trip_long"        # Trip duration 60 minutes or more
+  ))
+
+
+# Extract the month from the "day" column
+dat <- dat %>%
+  mutate(month = month(day))  # Extract month and label with abbreviated month names
+
+#factors 
+dat$mem <- as.factor(dat$mem)
+dat$trip_category <- as.factor(dat$trip_category)
+dat$rain <- as.factor(dat$rain)
+
+
+# View the first few rows of the dataset to confirm the new variables
+head(dat)
+
+```
+```{r}
+dat$trip_category <- as.factor(dat$trip_category)
+levels(dat$trip_category)
+```
+##### Check the distribution of the rushmod variable
+```{r}
+# Check the distribution of the rushmod variable
+table(dat$rushmod, dat$wend)
+
+```
+
+
+####Exploration
+
+```{r}
+summary(dat)
+```
+
+
+We have as much as member than non-member riders
+```{r}
+table(dat$mem)
+```
+
+```{r}
+table(dat$wday)
+```
+
+
+
+### Graphs
+
+```{r}
+#Checking if any columsn have NA, nope! What a clean dataset. 
+colSums(is.na(dat))
+
+#Checking for data distribution
+hist(dat$dur)
+boxplot(dat$dur)
+hist(log(dat$dur/60))         #seems like this normalizes the data nicely
+hist(as.integer(dat$wday))    #all days appear equally represented
+hist(dat$temp)                #temperature appears almost normally distributed
+boxplot(dat$temp)
+hist(dat$prec)                #Rain appears highly non normal as well as having multiple 0 entries, suggest to transform it into a factor of rain vs no rain. 
+100*sum(dat$prec == 0)/length(dat$prec) #proportion or days without rain. 
+```
+
+## Data analysis
+#### Statistic of trip duration for mem=1 and mem=0 
+
+We need to calculate the average trip duration for both members and non-members. Then, we’ll adjust for weekend vs. non-weekend trips to see if the patterns hold
+
+```{r echo=FALSE}
+# Load necessary libraries
+library(dplyr)
+
+# Create a summary table for trip duration for members vs non-members
+trip_duration_summary <- dat %>%
+  group_by(mem) %>%
+  summarize(
+    count = n(),                          # Number of trips
+    avg_duration = mean(dur, na.rm = TRUE), # Average trip duration
+    median_duration = median(dur, na.rm = TRUE), # Median trip duration
+    sd_duration = sd(dur, na.rm = TRUE),    # Standard deviation of trip duration
+    min_duration = min(dur, na.rm = TRUE),  # Minimum trip duration
+    max_duration = max(dur, na.rm = TRUE),  # Maximum trip duration
+    Q1_duration = quantile(dur, 0.25, na.rm = TRUE),  # First quartile (25%)
+    Q3_duration = quantile(dur, 0.75, na.rm = TRUE)   # Third quartile (75%)
+  )
+
+# View the summary table
+print(trip_duration_summary)
+
+```
+
+#### Statistic on trip duration when we adjust for weekend vs. non-weekend usage (wend= 0 or 1)
+
+```{r echo=FALSE}
+
+# Summary of average trip duration by membership status
+summary_mem_vs_nonmem <- dat %>%
+  group_by(mem) %>%
+  summarize(avg_duration = mean(dur, na.rm = TRUE))
+
+# Summary of average trip duration by membership status and weekend
+summary_mem_vs_nonmem_wend <- dat %>%
+  group_by(mem, wend) %>%
+  summarize(avg_duration = mean(dur, na.rm = TRUE))
+
+# View summaries
+print("Average trip duration for members vs non-members:")
+print(summary_mem_vs_nonmem)
+
+print("Average trip duration for members vs non-members, separated by weekend/non-weekend:")
+print(summary_mem_vs_nonmem_wend)
+
+```
+
+Average trip duration for non members on weekend (wend=1) is higher than non members on weekdays (1153.80 vs 1090.89) . The same remarks goes for members, they tend to bike more on weekends. We also notice that non members bike more than members. Non members also bike for a longer time than members. Even after checking for weekends and weekdays. We can do a way ANOVA to assess the mean difference of duration for members vs non-members accounting for wend.
+
+### Distribution of Duration with other variable
+
+```{r}
+library(ggplot2)
+# library(tidyr)
+ggplot(dat, aes(x = factor(mem, labels = c("Non-member", "Member")), fill = trip_category)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~ wend) +  # Facet by weekend status (wend)
+  labs(title = "Distribution of Trip Duration by Membership and Weekend Status",
+       x = "Membership", y = "Count", fill = "Trip Duration Category") +
+  scale_fill_manual(values = c("trip_short" = "#56B4E9", "trip_med" = "#009E73", "trip_long" = "#D55E00")) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+### Two-Sample t-test (Comparing Two Groups: Members vs. Non-members)
+To assess if BIXI members have shorter trips than non-members
+
+```{r}
+# Perform a two-sample t-test
+
+t_test_result <- t.test(dur ~ mem, data = dat)
+
+# Print the result of the t-test
+print(t_test_result)
+```
+Based on the very small p-value, we reject the null hypothesis and conclude that non-members take significantly longer trips on average compared to members. The difference in mean trip durations is statistically significant, with non-members taking trips that are 3.78 to 6.61 minutes longer on average than members. 
+##### when include wend 
+
+```{r}
+
+# Model 1: Trip duration ~ membership (mem)
+model1 <- lm(dur ~ mem, data = dat)
+
+# Model 2: Trip duration ~ membership (mem) + weekend (wend) + interaction
+model2 <- lm(dur ~ mem * wend, data = dat)
+
+# Compare the two models using ANOVA
+anova_comparison <- anova(model1, model2)
+
+# Print the ANOVA comparison result
+print(anova_comparison)
+
+```
+Non-significant p-value (0.5673): The addition of the weekend status (wend) and the interaction between membership and weekend status (mem * wend) does not significantly improve the model's ability to explain trip duration.
+This means that, based on this analysis, weekend status (wend) does not have a significant effect on trip duration, nor does it significantly interact with membership (mem) to affect trip duration.
+
+
+### With weather (rain or no rain)
+
+the distribution of trip duration for members vs. non-members, broken down by whether the trip happened on a weekend or weekday and whether it was raining.
+
+
+```{r}
+ggplot(dat, aes(x = factor(mem, labels = c("Non-member", "Member")), fill = trip_category)) +
+  geom_bar(position = "dodge") +
+  facet_grid(rain ~ wend) +  # Switch the facets (rain on rows, wend on columns)
+  labs(title = "Distribution of Trip Duration by Membership, Rain, and Weekend Status",
+       x = "Membership", y = "Count", fill = "Trip Duration Category") +
+  scale_fill_manual(values = c("trip_short" = "#56B4E9", "trip_med" = "#009E73", "trip_long" = "#D55E00")) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Model 3: Trip duration ~ membership (mem) + weekend (wend) + rain + interactions
+model3 <- lm(dur ~ mem * wend * rain, data = dat)
+
+# Perform the ANOVA to compare models
+anova_comparison_rain <- anova(model2, model3)
+
+# Print the ANOVA comparison result
+print(anova_comparison_rain)
+
+
+```
+Non-significant p-value (0.6843): This means that adding rain and its interactions with membership and weekend status does not significantly improve the model's fit.
+Therefore, rain does not have a statistically significant impact on trip duration in this dataset.
+Based on this analysis, rain does not seem to be an important factor in explaining trip duration, and you can stick with the simpler Model 2 (which includes only membership and weekend status).
+
+### With rushmod
+The linear model will show if there are significant differences in trip durations between:
+
+    AM rush hour (rushmod = 1).
+    PM rush hour (rushmod = 2).
+    Non-rush hour (rushmod = 3).
+    
+```{r}
+# Filter the data to only include weekday trips (wend == 0)
+weekday_data <- dat %>% filter(wend == 0)
+# Convert rushmod to a factor for modeling
+weekday_data$rushmod <- as.factor(weekday_data$rushmod)
+# Fit a linear model to compare trip durations based on rush hour categories
+rush_hour_model <- lm(dur ~ rushmod, data = weekday_data)
+
+# Print the summary of the model
+summary(rush_hour_model)
+
+```
+The p-values for both rushmod2 (PM rush hour) and rushmod3 (non-rush hour) are highly significant (p = 0.000814 and p = 0.000251, respectively). This suggests that both PM rush hour and non-rush hour trip durations are significantly longer than AM rush hour trip durations.
+```{r}
+# Perform Tukey HSD post-hoc test for pairwise comparisons
+rushmod_comparison <- TukeyHSD(aov(rush_hour_model))
+
+# Print the pairwise comparison results
+print(rushmod_comparison)
+
+```
+PM rush vs. AM rush (2-1):
+
+    Difference: 212.71 seconds longer in PM rush hour compared to AM rush hour.
+    p-value: 0.0023 (significant), meaning the trip durations during PM rush hour are significantly longer than during AM rush hour.
+
+Non-rush vs. AM rush (3-1):
+
+    Difference: 232.72 seconds longer in non-rush hour compared to AM rush hour.
+    p-value: 0.0007 (significant), meaning the trip durations during non-rush hours are significantly longer than during AM rush hour.
+
+Non-rush vs. PM rush (3-2):
+
+    Difference: 20.01 seconds longer in non-rush hour compared to PM rush hour.
+    p-value: 0.9465 (not significant), meaning there is no significant difference between PM rush hour and non-rush hour trip durations.
+
+Conclusion:
+
+    AM rush hour trips are significantly shorter than both PM rush hour and non-rush hour trips.
+    There is no significant difference between PM rush hour and non-rush hour trip durations.
+
+
+
